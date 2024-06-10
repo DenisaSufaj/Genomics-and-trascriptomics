@@ -1,0 +1,618 @@
+---
+title: "Bulk RNASeq Analysis"
+author: "Denisa Sufaj"
+date: "2024-07-12"
+output: html_document
+---
+
+# Bulk RNASeq Analysis
+
+This Rmarkdown file explains the workflow that was used to perform Bulk RNAS-seq Analysis for the purpose of the 'Genomics and Transcriptomics' exam.
+
+## 0. Required packages and data import
+
+```{r setup, include=FALSE}
+# R packages for working on “bulk” RNA-Seq data can be installed from Bioconductor with the following commands:
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("edgeR")
+BiocManager::install("recount3")
+#The above installs recount3, used to manage the datasets.
+library(recount3)
+library(recount)
+library(edgeR)
+
+#The following are the other tools needed:
+library(ggplot2)
+```
+
+Load the tissues data:
+
+```{r setup, include=FALSE}
+rse_brain <- readRDS("rse_brain.RDS")
+rse_heart <- readRDS("rse_heart.RDS")
+rse_lung <- readRDS("rse_lung.RDS")
+```
+
+Scaling the gene expression counts is important because it can help improve the quality of the data and make it more suitable for analysis. The aim is to bring the data onto a common scale to enhance comparability and interpretation.
+
+```{r setup, include=FALSE}
+assays(rse_brain)$counts <- transform_counts(rse_brain)
+assays(rse_heart)$counts <- transform_counts(rse_heart)
+assays(rse_lung)$counts <- transform_counts(rse_lung)
+```
+
+## It's a good practice to visualize the data and how they are distributed.
+
+-   *by tissue*
+
+```{r setup, include=FALSE}
+# Access the metadata
+head(rse_brain)
+rowData(rse_brain)
+colData(rse_brain)
+
+table(colData(rse_brain)$gtex.smtsd)
+dim(rse_brain)
+##[1] 54042  2931
+
+table(colData(rse_heart)$gtex.smtsd)
+dim(rse_heart)
+##[1] 54042   942
+
+table(colData(rse_lung)$gtex.smtsd)
+dim(rse_lung)
+##[1] 54042   655
+```
+
+-   *by age group*
+
+```{r setup, include=FALSE}
+table(colData(rse_brain)$gtex.age)
+table(colData(rse_heart)$gtex.age)
+table(colData(rse_lung)$gtex.age)
+
+# Create a dataframe with the data
+age_brain <- table(colData(rse_brain)$gtex.age)
+age_heart <- table(colData(rse_heart)$gtex.age)
+age_lung <- table(colData(rse_lung)$gtex.age)
+data <- data.frame(
+  Tissue = c(rep("Brain", length(age_brain)),
+             rep("Heart", length(age_heart)),
+             rep("Lung", length(age_lung))),
+  Age = c(names(age_brain), names(age_heart), names(age_lung)),
+  Sample_Count = c(age_brain, age_heart, age_lung)
+)
+
+# Create the bar plot using ggplot2
+color_palette <- c("#A9328B", "#A9A9A9", "#800080")
+age_plot <- ggplot(data, aes(x = Age, y = Sample_Count, fill = Tissue)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = color_palette) +  # Utilizza i colori personalizzati
+  labs(title = " Distribution of sample count per age interval and tissue",
+       x = "Age", y = "Sample Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+-   *by gender*
+
+```{r setup, include=FALSE}
+table(colData(rse_brain)$gtex.sex)
+table(colData(rse_heart)$gtex.sex)
+table(colData(rse_lung)$gtex.sex)
+
+gender_brain <- table(colData(rse_brain)$gtex.sex)
+gender_heart <- table(colData(rse_heart)$gtex.sex)
+gender_lung <- table(colData(rse_lung)$gtex.sex)
+data_gender <- data.frame(
+  Tissue = c(rep("Brain", length(gender_brain)),
+             rep("Heart", length(gender_heart)),
+             rep("Lung", length(gender_lung))),
+  Gender = rep(c("Male", "Female"), each = length(gender_brain)),
+  Sample_Count = c(gender_brain, gender_heart, gender_lung),
+  Age = rep(c(names(gender_brain), names(gender_heart), names(gender_lung)), times = 2)
+)
+
+color_palette <- c("#A9328B", "#A9A9A9", "#800080")  
+gender_plot <- ggplot(data_gender, aes(x = Gender, y = Sample_Count, fill = Tissue)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = color_palette) +  # Utilizza i colori personalizzati
+  labs(title = " Distribution of sample count by gender and tissue",
+       x = "Gender", y = "Sample Count") +
+  theme_minimal()
+```
+
+Boxplots who provide a quick visual assessment of the mapping quality across the different tissues.
+
+```{r setup, include=FALSE}
+mapped_brain <- colData(rse_brain)$"recount_qc.star.uniquely_mapped_reads_%_both"
+mapped_heart <- colData(rse_heart)$"recount_qc.star.uniquely_mapped_reads_%_both"
+mapped_lung <- colData(rse_lung)$"recount_qc.star.uniquely_mapped_reads_%_both"
+
+par(mfrow = c(1, 3))
+par(cex.axis = 1.5, cex.main = 2)
+
+# Plot for Brain
+stats_brain <- boxplot.stats(mapped_brain)
+boxplot(mapped_brain, outline = FALSE, main = "Brain", xlab = "", ylab = "% Uniquely Mapped Reads", col = "#A9328B", ylim = c(0, 100))
+points(rep(1, length(stats_brain$out)), stats_brain$out, pch = 21, cex = 1.5, bg = "#A9328B")
+median_brain <- median(mapped_brain) 
+##[1] 89.5
+
+# Plot for Heart
+stats_heart <- boxplot.stats(mapped_heart)
+boxplot(mapped_heart, outline = FALSE, main = "Heart", xlab = "", ylab = "% Uniquely Mapped Reads", col = "#A9A9A9", ylim = c(0, 100))
+points(rep(1, length(stats_heart$out)), stats_heart$out, pch = 21, cex = 1.5, bg = "#A9A9A9")
+median_heart <- median(mapped_heart) 
+##[1] 90.5
+
+# Plot for Lung
+stats_lung <- boxplot.stats(mapped_lung)
+boxplot(mapped_lung, outline = FALSE, main = "Lung", xlab = "", ylab = "% Uniquely Mapped Reads", col = "#800080", ylim = c(0, 100))
+points(rep(1, length(stats_lung$out)), stats_lung$out, pch = 21, cex = 1.5, bg = "#800080")
+median_lung <- median(mapped_lung)
+##[1] 90.4
+```
+
+Each point in the above graph isn't a gene, is a sample. We are analyzing row data, without any quality control on them, the only thing that is important is that a sample is above 85%. Plotting the % of uniquely mapped reads we can see there are a lot of samples with a low mapping percentage. Observations from the Brain plot shows that the median percentage of uniquely mapped reads is 89.5%. In the heart plot the median percentage of uniquely mapped reads is 90.5%. There are outliers, but they are closer to the main distribution compared to the brain data, for exampple. Lung: The median percentage of uniquely mapped reads in the lung plot is 90.4%.
+
+We can also retrieve the estimated % of reads coming from rRNA genes and we can see that it is surprisingly correlated with the percentage of reads coming from mitocondrial genes, this can be explained by the fact that standard rRNA depletion methods typically target nuclear rRNA and not mitochondrial rRNA. We also have to take into account that mitochondria contain their own ribosomes and rRNA genes, that can be quite abundant in cells, and since the depletion methods do not remove these sequences, a significant proportion of reads can map to the mitochondrial genome.
+
+```{r}
+boxplot(colData(rse_brain)$gtex.smrrnart)
+head(colData(rse_brain)$"recount_qc.aligned_reads%.chrm")
+boxplot(colData(rse_brain)$"recount_qc.aligned_reads%.chrm")
+
+boxplot(colData(rse_heart)$gtex.smrrnart)
+head(colData(rse_heart)$"recount_qc.aligned_reads%.chrm")
+boxplot(colData(rse_heart)$"recount_qc.aligned_reads%.chrm")
+
+boxplot(colData(rse_lung)$gtex.smrrnart)
+head(colData(rse_lung)$"recount_qc.aligned_reads%.chrm")
+boxplot(colData(rse_lung)$"recount_qc.aligned_reads%.chrm")
+
+par(mfrow = c(1, 3))
+par(cex.axis = 1.5, cex.main = 2)
+
+plot(colData(rse_lung)$gtex.smrrnart, colData(rse_lung)$"recount_qc.aligned_reads%.chrm", 
+     main = "Lung", xlab = "%Ribosomal RNA", ylab = "%Mitochondrial RNA")
+     
+plot(colData(rse_heart)$gtex.smrrnart, colData(rse_heart)$"recount_qc.aligned_reads%.chrm", 
+     main = "Heart", xlab = "%Ribosomal RNA", ylab = "%Mitochondrial RNA")
+     
+plot(colData(rse_brain)$gtex.smrrnart, colData(rse_brain)$"recount_qc.aligned_reads%.chrm", 
+     main = "Brain", xlab = "%Ribosomal RNA", ylab = "%Mitochondrial RNA")
+
+
+## If we want to fit a linear model
+par(mfrow = c(1, 3))
+par(cex.axis = 1.5, cex.main = 2)
+
+# Plot for Lung
+plot(
+  colData(rse_lung)$gtex.smrrnart, 
+  colData(rse_lung)$"recount_qc.aligned_reads%.chrm",
+  main = "Lung",
+  xlab = "%Ribosomal RNA",
+  ylab = "%Mitochondrial RNA"
+)
+lm_fit_lung <- lm(colData(rse_lung)$"recount_qc.aligned_reads%.chrm" ~ colData(rse_lung)$gtex.smrrnart)
+# Add the regression line
+abline(lm_fit_lung, col = "red")
+
+# Plot for Heart
+plot(
+  colData(rse_heart)$gtex.smrrnart, 
+  colData(rse_heart)$"recount_qc.aligned_reads%.chrm",
+  main = "Heart",
+  xlab = "%Ribosomal RNA",
+  ylab = "%Mitochondrial RNA"
+)
+lm_fit_heart <- lm(colData(rse_heart)$"recount_qc.aligned_reads%.chrm" ~ colData(rse_heart)$gtex.smrrnart)
+abline(lm_fit_heart, col = "red")
+
+# Plot for Brain
+plot(
+  colData(rse_brain)$gtex.smrrnart, 
+  colData(rse_brain)$"recount_qc.aligned_reads%.chrm",
+  main = "Brain",
+  xlab = "%Ribosomal RNA",
+  ylab = "%Mitochondrial RNA"
+)
+lm_fit_brain <- lm(colData(rse_brain)$"recount_qc.aligned_reads%.chrm" ~ colData(rse_brain)$gtex.smrrnart)
+abline(lm_fit_brain, col = "red")
+```
+
+In this last dot plot we have on the x-axes the ribosomial RNA and on th y-axes the mitocondrial RNA. Each dot is one sample and we can see that we have a perfect correlation.
+
+## 1. Replicate selection and Quality Control
+
+Retrieving the replicates for the three tissues.
+
+```{r setup, include=FALSE}
+#select the column for the brain tissue
+colData(rse_brain)$gtex.smrin[30]
+##[1] 7.4
+colData(rse_brain)$gtex.smrin[31]
+##[1] 6.8
+colData(rse_brain)$gtex.smrin[32] #we will see that this sample is not satisfying the last request.
+##[1] 7.1
+colData(rse_brain)$gtex.smrin[33]
+##[1] 6.7
+
+#select the column for the heart tissue
+colData(rse_heart)$gtex.smrin[30]
+#[1] 8.9
+colData(rse_heart)$gtex.smrin[31]
+##[1] 6.4
+colData(rse_heart)$gtex.smrin[32] 
+##[1] 9
+
+colData(rse_lung)$gtex.smrin[30]
+##[1] 8.4
+colData(rse_lung)$gtex.smrin[31]
+##[1] 8.4
+colData(rse_lung)$gtex.smrin[32]
+##[1] 6.9
+```
+
+Minimum RIN is at leat 7, but 6 or higher is usually considered "acceptable". So all the 3 samples pass the threshold.
+
+Estimated fraction of rRNA.
+
+```{r setup, include=FALSE}
+#Select the column for the brain tissue
+colData(rse_brain)$gtex.smrrnart[30]
+##[1] 0.0234558
+colData(rse_brain)$gtex.smrrnart[31]
+##[1] 0.0407667
+colData(rse_brain)$gtex.smrrnart[32] #we will see that this sample is not satisfying the last request.
+##[1] 0.057392
+colData(rse_brain)$gtex.smrrnart[33]
+##[1] 0.0639273
+
+#Select the column for the heart tissue
+colData(rse_heart)$gtex.smrrnart[30]
+##[1] 0.0130939
+colData(rse_heart)$gtex.smrrnart[31]
+##[1] 0.0739928
+colData(rse_heart)$gtex.smrrnart[32] 
+##[1] 0.0209521
+
+#Select the column for the lung tissue
+colData(rse_lung)$gtex.smrrnart[30]
+##[1] 0.00420046
+colData(rse_lung)$gtex.smrrnart[31]
+##[1] 0.00802071
+colData(rse_lung)$gtex.smrrnart[32] 
+##[1] 0.00375175
+```
+
+This should be very low, never anyway higher than 10% (or 0.1 since here is the fraction to be reported). Once again, all the three samples pass the threshold.
+
+Percentage of mapped reads:
+
+```{r setup, include=FALSE}
+#Select the column from the brain tissue
+colData(rse_brain)$"recount_qc.star.uniquely_mapped_reads_%_both"[30]
+##[1] 87.9
+colData(rse_brain)$"recount_qc.star.uniquely_mapped_reads_%_both"[31]
+##[1] 88.3
+colData(rse_brain)$"recount_qc.star.uniquely_mapped_reads_%_both"[32] #this is not at least 85% so we move to the next column (n+1)
+##[1] 80.4
+colData(rse_brain)$"recount_qc.star.uniquely_mapped_reads_%_both"[33]
+##[1] 91.4
+
+#Select the column from the heart tissue
+colData(rse_heart)$"recount_qc.star.uniquely_mapped_reads_%_both"[30]
+##[1] 87.5
+colData(rse_heart)$"recount_qc.star.uniquely_mapped_reads_%_both"[31]
+##[1] 91.4
+colData(rse_heart)$"recount_qc.star.uniquely_mapped_reads_%_both"[32]
+##[1] 88.2
+
+#Select the column from the lung tissue
+colData(rse_lung)$"recount_qc.star.uniquely_mapped_reads_%_both"[30]
+##[1] 91.2
+colData(rse_lung)$"recount_qc.star.uniquely_mapped_reads_%_both"[31]
+##[1] 91.8
+colData(rse_lung)$"recount_qc.star.uniquely_mapped_reads_%_both"[32]
+##[1] 90
+```
+
+We want at least 85% of the reads uniquely mapped, since it is a human sample.
+
+The three replicates were chosen by iterating through them until those with RIN\> 7, rRNA\< 0.1 and mapped reads\> 85%. Final 3 replicates are 30,31,32 for lung and hear and 30,31,33 for brain.
+
+```{r setup, include=FALSE}
+rse_brain_selected <- rse_brain[,c(30,31,33)]
+rse_heart_selected <- rse_heart[,c(30,31,32)]
+rse_lung_selected <- rse_lung[,c(30,31,32)]
+
+#After selecting the columns, the code extracts the gene expression counts from the selected columns for the brain, heart, and lung respectively.
+counts_brain_selected <- assays(rse_brain_selected)$counts
+counts_heart_selected <- assays(rse_heart_selected)$counts
+counts_lung_selected <- assays(rse_lung_selected)$counts
+```
+
+We build the count table giving more meaningful names to the columns and rows, and finally build the DGE object for edgeR.
+
+```{r setup, include=FALSE}
+x <- cbind(counts_brain_selected,counts_heart_selected,counts_lung_selected)
+print(dim(x))
+
+colnames(x) <- c("Brain30", "Brain31","Brain33","Heart30", "Heart31","Heart32","Lung30","Lung31","Lung32")
+ncol(x)
+rownames(x) <- rowData(rse_brain_selected)$gene_name
+y <- DGEList(counts=x)
+## to display the resulting 'y' DGElist object
+```
+
+We define how replicates are grouped:
+
+```{r setup, include=FALSE}
+group <- as.factor(c("Brain","Brain","Brain","Heart","Heart","Heart","Lung","Lung","Lung"))
+y$samples$group <- group
+```
+
+## 2. Normalization
+
+We add to the samples the “quality” information that we employed to select them, creating new labels to the “samples” field of the DGE object, like we just did for the groups.
+
+```{r setup, include=FALSE}
+y$samples$rin <- as.factor(c(colData(rse_brain_selected)$gtex.smrin,colData(rse_heart_selected)$gtex.smrin,colData(rse_lung_selected)$gtex.smrin))
+ 
+y$samples$slice <- as.factor(c(colData(rse_brain_selected)$gtex.smtsd,colData(rse_heart_selected)$gtex.smtsd,colData(rse_lung_selected)$gtex.smtsd))
+
+y$samples$sex <- as.factor(c(colData(rse_brain_selected)$gtex.sex,colData(rse_heart_selected)$gtex.sex,colData(rse_lung_selected)$gtex.sex))
+
+y$samples$age <- as.factor(c(colData(rse_brain_selected)$gtex.age,colData(rse_heart_selected)$gtex.age,colData(rse_lung_selected)$gtex.age))
+
+y$samples$rRNA <- as.factor(c(colData(rse_brain_selected)$gtex.smrrnart,colData(rse_heart_selected)$gtex.smrrnart,colData(rse_lung_selected)$gtex.smrrnart))
+
+y$samples$mapped <- as.factor(c(colData(rse_brain_selected)$"recount_qc.star.uniquely_mapped_reads_%_both", colData(rse_heart_selected)$"recount_qc.star.uniquely_mapped_reads_%_both",colData(rse_lung_selected)$"recount_qc.star.uniquely_mapped_reads_%_both"))
+
+y$samples$chrm <- as.factor(c(colData(rse_brain_selected)$"recount_qc.aligned_reads%.chrm", colData(rse_heart_selected)$"recount_qc.aligned_reads%.chrm",colData(rse_lung_selected)$"recount_qc.aligned_reads%.chrm"))
+y
+```
+
+About the library size we want at least 20M reads or more for quantification.
+
+```{r setup, include=FALSE}
+# we are identifying how many rows (genes) have zero counts across all nine samples in the dataset y
+table(rowSums(y$counts==0)==9)
+## FALSE  22963 
+```
+
+The purpose of this operation is to identify genes that are not expressed in any of the samples (i.e., genes that have zero counts across all samples). This information can be useful for filtering out genes that are not expressed at all, which might be considered uninformative or irrelevant for downstream analyses such as differential expression analysis. By removing these genes, you can reduce the dimensionality of your data and focus on the genes that are actually expressed in your samples. A lot of genes with zero counts (22963) or low expression, so we remove them.
+
+```{r setup, include=FALSE}
+## Filter lowly expressed genes based on the experimental groups
+keep.exprs <- filterByExpr(y, group=group)
+## Subset the DGEList object to keep only the genes that passed the filter
+# keep.lib.sizes=FALSE ensures that library sizes are recomputed for the subset
+y <- y[keep.exprs,, keep.lib.sizes=FALSE]
+dim(y) 
+##[1] 22963     9
+```
+
+edgeR includes several useful functions for transforming the counts into counts per million, FPKM, TPM etc. Extract and store in a vector the log of the counts per million before normalization with the “cpm” function, and then normalize them:
+
+```{r setup, include=FALSE}
+logcpm_before <- cpm(y, log=TRUE)
+y <- calcNormFactors(y, method = "TMM")
+y
+```
+
+Normalization factors are used to adjust for differences in sequencing depth and RNA composition between samples in RNA-Seq data. These factors ensure that the expression levels are comparable across samples, so it helps to mitigate technical biases and ensure that downstream analyses reflect true biological differences rather than technical artifacts. The normalization factors indicate that there are minor variations in sequencing depth and RNA composition between the samples. The adjustments are relatively small, which is generally a good sign that the data are reasonably consistent. However, the differences still need to be accounted for to ensure accurate and comparable expression level measurements across samples.
+
+Let us compare the distribution of count values before and after normalization:
+
+```{r setup, include=FALSE}
+logcpm_after <- cpm(y, log=TRUE)
+
+colors <- c("#A9328B", "#A9A9A9", "#800080", "#BA55D3", "#9370DB", "#8A2BE2", "#9400D3", "#9932CC", "#DA70D6")
+par(mfrow = c(1, 2))
+# Generate the box plot for logcpm_before
+boxplot(logcpm_before, notch = TRUE, col = colors, main = "Before normalization", ylab = "Log CPM")
+# Generate the box plot for logcpm_after
+boxplot(logcpm_after, notch = TRUE, col = colors, main = "After normalization", ylab = "Log CPM")
+```
+
+## 4. Linear model design and DE analysis
+
+Now we design the linear model. Intercept or not, it changes little. Anyway, from a logical point of view the intercept is not needed here.
+```{r}
+design <- model.matrix(~0+group, data=y$samples)
+colnames(design) <- levels(y$samples$group)
+design
+#Brain Heart Lung
+```
+
+The edgeR package also allows to plot the clusters in a 2D (or more, if required) visual space in order to convey the similarity between them:
+
+```{r setup, include=FALSE}
+logcpm <- cpm(y, log=TRUE)
+
+par(mfrow=c(1,3))
+plotMDS(logcpm, labels=y$samples$rRNA)
+title("rRNA gene content (%)")
+plotMDS(logcpm, labels=y$samples$chrm)
+title("Mitochondrial gene content (%)")
+plotMDS(logcpm, labels=y$samples$rin)
+title("RIN")
+
+par(mfrow=c(1,3))
+plotMDS(logcpm, labels=group)
+title("Tissue")
+plotMDS(logcpm, labels=y$samples$age)
+title("Age")
+plotMDS(logcpm, labels=y$samples$sex)
+title("Sex")
+```
+
+Replicates cluster well. -trying label the points in the plot with different info.
+
+The variability can be plotted vie edgeR directly, to show a comparison between the common variance and the trend across samples:
+
+```{r setup, include=FALSE}
+y <- estimateDisp(y, design)
+plotBCV(y)
+#All the parameters have been stored in the y object:
+y
+y$common.dispersion
+##[1] 0.3686719
+
+```
+
+Remember that the BCV is the square root of the dispersion - NOT the variance itself. As we can see the dispersion (common or gene-wise) remains quite low: not surprising, since this experiment is done on cell lines (hence, little biological variation). Dispersion is a measure of variability in count data. In the context of RNA-seq, it accounts for biological variability between samples as well as technical variability. The common dispersion is a single dispersion value applied to all genes in the dataset. It provides a rough estimate of variability across the entire dataset.
+
+Now we have completed the normalization and the parameters estimation. We not fit the data to the “quasi linear generalized linear” model we designed. The function essentially computes all the “beta” coefficients of the model, gene by gene and condition by condition, taking into account mean and (estimated) variance of each gene in each condition. There are other alternatives, but this is the one currenly recommended by authors of edgeR. A GLM (i.e. generalised linear model) should be built for each combination of comparison between two out of three samples at a time.
+
+```{r setup, include=FALSE}
+## The generalised linear model for QLFit:
+fit <- glmQLFit(y, design)
+```
+
+For testing for DE genes, we have to specify the contrast, that is, which sample is compared to which. The following is condition 2 vs condition 1 (the intercept) comparing β1 with β0. The advice from the manual is to use the “QLFTest”. topTags returns the genes with the highest variation - lowest p-value.
+
+```{r setup, include=FALSE}
+## Comparing DE between two tissues: HEART (top) vs BRAIN (bottom)
+qlfHB <- glmQLFTest(fit, contrast=c(-1,1,0))
+#qlfHB 
+head(qlfHB$table)
+```
+
+“topTags” extracts the table, sorted by p-value, and adds the FDR:
+
+```{r setup, include=FALSE}
+topTags(qlfHB, n=10,adjust.method = "BH", sort.by = "PValue")
+resultsHB <- topTags(qlfHB, n = 10000000, adjust.method = "BH", sort.by = "PValue", p.value = 1)
+#This can be saved in a file, e.g. for importing it in Excel.
+write.table(resultsHB, "resultsHB.txt")
+```
+
+By default it outputs just the top 10 genes (the n parameter). A very “quick and dirty” way to have the full table could be: The FDR column contains the original p-value multiplied by a factor determined by the ranking of the gene in the table. The first one will be multiplied by n, the second by n/2, the third by n/3, and so on, where n is the number of genes tested. The complete results of the test are in qlf.2vs1\$table. In the last column the p-values have been corrected into FDR values with the BH correction for multiple testing. Let us select the significant ones, with corrected p-value (FDR) \< 0.05
+
+
+```{r}
+## Comparing DE between two tissues: BRAIN (top) vs LUNG (bottom)
+qlfBL <- glmQLFTest(fit, contrast=c(1,0,-1))
+#qlfBrBL
+head(qlfBL$table)
+```
+
+```{r}
+resultsBL <- topTags(qlfBL, n = 10000000, adjust.method = "BH", sort.by = "PValue", p.value = 1)
+```
+
+```{r}
+write.table(resultsBL, "resultsLB.txt")
+summary(decideTests(qlfBL, p.value=0.01, lfc=1))
+```
+
+```{r}
+## Comparing DE between two tissues: LUNG (top) vs HEART (bottom)
+qlfLH <- glmQLFTest(fit, contrast=c(0,-1,1))
+#qlfBlH
+head(qlfLH$table)
+```
+
+```{r}
+resultsLH <- topTags(qlfLH, n = 10000000, adjust.method = "BH", sort.by = "PValue", p.value = 1)
+write.table(resultsLH, "resultsLH.txt")
+```
+
+```{r}
+summary(decideTests(qlfLH, p.value=0.01, lfc=1))
+```
+
+```{r}
+assays(rse_brain)$TPM <- recount::getTPM(rse_brain)
+assays(rse_heart)$TPM <- recount::getTPM(rse_heart)
+assays(rse_lung)$TPM <- recount::getTPM(rse_lung)
+which(rowData(rse_brain)$gene_name == "GATA4")
+##[1] 5923 48132
+rowRanges(rse_brain)@seqnames[5923]
+##Values : Values : KZ208915.1
+rowRanges(rse_brain)@seqnames[48132]
+##  Values : chr8
+boxplot(assays(rse_brain)$TPM[48132,],assays(rse_heart)$TPM[48132,], assays(rse_lung)$TPM[48132,], outline=F )
+```
+
+```{r}
+assays(rse_brain)$TPM <- recount::getTPM(rse_brain)
+assays(rse_heart)$TPM <- recount::getTPM(rse_heart)
+assays(rse_lung)$TPM <- recount::getTPM(rse_lung)
+which(rowData(rse_brain)$gene_name == "MYPN")
+##[1]  11610
+boxplot(assays(rse_brain)$TPM[11610,],assays(rse_heart)$TPM[11610,], assays(rse_lung)$TPM[11610,], outline=F )
+```
+
+```{r}
+assays(rse_brain)$TPM <- recount::getTPM(rse_brain)
+assays(rse_heart)$TPM <- recount::getTPM(rse_heart)
+assays(rse_lung)$TPM <- recount::getTPM(rse_lung)
+which(rowData(rse_brain)$gene_name == "LOC105372244")
+##[1] 27335
+boxplot(assays(rse_brain)$TPM[27335,],assays(rse_heart)$TPM[27335,], assays(rse_lung)$TPM[27335,], outline=F )
+```
+
+```{r}
+#FUT9
+assays(rse_brain)$TPM <- recount::getTPM(rse_brain)
+assays(rse_heart)$TPM <- recount::getTPM(rse_heart)
+assays(rse_lung)$TPM <- recount::getTPM(rse_lung)
+which(rowData(rse_brain)$gene_name == "FUT9")
+##[1] 44570
+boxplot(assays(rse_brain)$TPM[44570,],assays(rse_heart)$TPM[44570,], assays(rse_lung)$TPM[44570,], outline=F )
+```
+
+```{r} 
+#NDP 
+assays(rse_brain)$TPM <- recount::getTPM(rse_brain)
+assays(rse_heart)$TPM <- recount::getTPM(rse_heart) assays(rse_lung)$TPM <- recount::getTPM(rse_lung)
+which(rowData(rse_brain)$gene_name == "NDP") \##[1] 52255 boxplot(assays(rse_brain)$TPM[52255,],assays(rse_heart)$TPM[52255,], assays(rse_lung)\$TPM[52255,], outline=F )
+```
+
+
+Now build lists of genes that are up-regulated in each tissue with respect the other two. decide a threshold and report all brain genes up-regulated in brain against lung and heart. Likewise for the other two tissues. The same should be done for one tissue against the other two at the same time:
+
+```{r}
+#Comparing DE between Brain (top) vs average of Heart and Lung (bottom)
+qlfAvg <- glmQLFTest(fit, contrast=c(1,-0.5,-0.5))
+qlfAvg
+head(qlfAvg$table)
+```
+
+```{r}
+topTags(qlfAvg, n=10,adjust.method = "BH", sort.by = "PValue")
+resultsAvg <- topTags(qlfAvg, n = 10000000, adjust.method = "BH", sort.by = "PValue", p.value = 1)
+write.table(resultsAvg, "resultsBrAvg.txt")
+summary(decideTests(qlfAvg, p.value=0.01, lfc=1))
+```
+
+Finally, let us check whether one of the genes that were DE among these samples are still DE if we consider the complete tissue datasets. For example, gene “PCDH10” is on the top of the DE lists, over-expressed in brain with respect to the other two tissues. Let us plot the distribution of expression across the three complete datasets, as TPM: Check whether one of the genes that were DE among these samples are still DE if we consider the complete tissue datasets. For example, gene “PCDH10” is on the top of the DE lists, over-expressed in brain with respect to the other two tissues. Let us plot the distribution of expression across the three complete datasets, as TPM: Let’s take gene ‘CA10’ as an example (the top DE gene in the 1 vs 2 comparison) . A boxplot can show if that gene is significantly more expressed in one tissue compared to the other two ones:
+
+```{r}
+#Adding TPM to the RSEs.
+#This process ensures that your RNA-seq data are properly normalized and ready for meaningful biological interpretation
+assays(rse_brain)$TPM <- recount::getTPM(rse_brain)
+assays(rse_heart)$TPM <- recount::getTPM(rse_heart)
+assays(rse_lung)$TPM <- recount::getTPM(rse_lung)
+which(rowData(rse_brain)$gene_name == "CA10")
+##[1] 25590
+#In this way we got the row number corresponding to gene “CA10”
+
+#plotting the example
+boxplot(assays(rse_brain)$TPM[25590,],assays(rse_heart)$TPM[25590,], assays(rse_lung)$TPM[25590,], outline=F )
+```
+
+do a statistical test
+```{r}
+wilcox.test(assays(rse_brain)$TPM[25590,], append(assays(rse_heart)$TPM[25590,],assays(rse_lung)$TPM[25590,]), alternative='two.sided',exact = F)
+```
+
+

@@ -1,0 +1,42 @@
+---
+title: "scRNASeq Analysis"
+author: "Denisa Sufaj"
+date: "2024-07-12"
+output: html_document
+---
+
+# Single cell RNASeq Analysis
+This Rmarkdown file explains the workflow that was used to perform scRNASeq Analysis for the purpose of the ‘Genomics and Transcriptomics’ exam.
+
+## 0. Required packages and data import
+Attach those packages in order to avoid incurring in errors while running the code.
+```{r}
+library(dplyr)
+library(Seurat)
+library(SeuratObject)
+library(patchwork)
+library(ggplot2)
+library(cowplot)
+```
+
+## 1.Data check and pre-processing
+First load the dataset that was locally downloaded from PanglaDB https://panglaodb.se/view_data.php?sra=SRA653146&srs=SRS3044257
+
+```{r}
+load("./SRA653146_SRS3044257.sparse.RData")
+```
+
+```{r}
+## Rename the genes to remove the ENSEMBL ID
+old_rownames <- rownames(sm)
+new_rownames <- gsub("_.*", "", old_rownames[grep("_", old_rownames)])
+rownames(sm) <- new_rownames
+rm("new_rownames","old_rownames")
+
+head(rownames(sm))
+## Convert to SeuratObject
+bm <- CreateSeuratObject(counts = sm, project = "Mammary tissue SRA653146", min.cells = 3, min.features = 200)
+bm  #genes are referred to as "features"
+```
+
+
